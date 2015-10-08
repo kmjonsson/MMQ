@@ -27,14 +27,15 @@ public:
 	 bool send(QString queue, QJsonValue data);
 	 void setKey(QString key);
 	 void setTimeout(int sec);
-	 bool waitId(qint64 id);
-	 bool waitId(qint64 id, QJsonObject &obj);
+	 void waitId(qint64 id);
 
 signals:
 	 void packet(QString queue,QJsonValue data);
 	 void authenticated();
     void connected();
     void disconnected();
+	 void status(QJsonValue data);
+	 void error(qint64 id);
 
 public slots:
     void tcp_connected();
@@ -44,16 +45,16 @@ public slots:
 
 private:
     QTcpSocket *socket;
+	 QMap<qint64, QJsonObject> packetStatus;
 	 QMutex statusMutex;
-	 QWaitCondition statusCondition;
-	 int process(QByteArray &line);
 	 qint64 authId;
 	 qint64 sendseq;
-	 qint64 sendMsg(QJsonObject);
-	 QMap<qint64, QJsonObject> status;
 	 bool isAuth;
 	 QByteArray key;
 	 int timeout;
+
+	 qint64 sendMsg(QJsonObject);
+	 int process(QByteArray &line);
 };
 
 #endif // MMQ_H

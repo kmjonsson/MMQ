@@ -57,9 +57,10 @@ void MMQ::readyRead()
 	}
 	// remove old status...
 	statusMutex.lock();
-	foreach(QJsonObject v, status.values()) {
+	foreach(QJsonObject v, packetStatus.values()) {
 		if(v["_timestamp_"].toInt()+10 < QDateTime::currentMSecsSinceEpoch() / 1000) {
-			status.remove(v["id"].toInt());
+			emit error(v["id"].toInt());
+			packetStatus.remove(v["id"].toInt());
 		}
 	}
 	statusMutex.unlock();
@@ -103,6 +104,7 @@ int MMQ::process(QByteArray &line) {
 			return 0;
 		}
 		if(msg["status"] != QString("OK")) {
+			emit error(msg["id"].toInt());
 			return 0;
 		}
 		if(msg["id"].toInt() == authId) {
@@ -110,10 +112,13 @@ int MMQ::process(QByteArray &line) {
 			emit authenticated();
 			return 1;
 		}
-		msg["_timestamp_"] = (int)(QDateTime::currentMSecsSinceEpoch()/1000);
 		statusMutex.lock();
-		status.insert(msg["id"].toInt(),msg);
-		statusCondition.wakeAll();
+		if(packetStatus.contains(msg["id"].toInt())) {
+			packetStatus.remove(msg["id"].toInt());
+			emit status(msg);
+		} else {
+			emit error(msg["id"].toInt());
+		}
 		statusMutex.unlock();
 		return 1;
 	}
@@ -160,9 +165,10 @@ bool MMQ::subscribe(QString queue) {
 	msg["type"] = QString("SUBSCRIBE");
 	msg["queue"] = queue;
 	qint64 id = sendMsg(msg);
-	if(id) {
-		// TODO wait for ID to return :-|
+	if(id < 0) {
+		return false;
 	}
+	waitId(id);
 	return true;
 }
 
@@ -181,59 +187,19 @@ bool MMQ::send(QString queue, QJsonValue data) {
 	response["queue"] = queue;
 	response["data"] = data;
 	qint64 id = sendMsg(response);
-	if(id == -1) {
+	if(id < 0) {
 		return false;
 	}
-	return waitId(id);
+	waitId(id);
+	return true;
 }
 
-bool MMQ::waitId(qint64 id, QJsonObject &obj) {
-	qint64 start = QDateTime::currentMSecsSinceEpoch();	
-	while(start+timeout*1000 > QDateTime::currentMSecsSinceEpoch()) {
-		if(!statusMutex.tryLock(1000)) {
-			continue;
-		}
-		if(!statusCondition.wait(&statusMutex,1000)) {
-			statusMutex.unlock();
-			continue;
-		}
-		if(!status.contains(id)) {
-			statusMutex.unlock();
-			continue;
-		}
-		obj = status[id];
-		status.remove(id);
-		statusMutex.unlock();
-		qDebug() << "Got Id :" << id;
-		return true;
-	}
-	qDebug() << "Fail to get Id :" << id;
-	return false;
-}
-
-bool MMQ::waitId(qint64 id) {
-	qDebug() << "Waiting for: " << id;
-	qint64 start = QDateTime::currentMSecsSinceEpoch();	
-	while(start+timeout*1000 > QDateTime::currentMSecsSinceEpoch()) {
-		QCoreApplication::processEvents();
-		continue;
-		if(!statusMutex.tryLock(1000)) {
-			continue;
-		}
-		if(!statusCondition.wait(&statusMutex,1000)) {
-			statusMutex.unlock();
-			continue;
-		}
-		if(!status.contains(id)) {
-			statusMutex.unlock();
-			continue;
-		}
-		status.remove(id);
-		statusMutex.unlock();
-		qDebug() << "Got Id :" << id;
-		return true;
-	}
-	qDebug() << "Fail to get Id :" << id;
-	return false;
+void MMQ::waitId(qint64 id) {
+	statusMutex.lock();
+	QJsonObject msg;
+	msg["_timestamp_"] = (int)(QDateTime::currentMSecsSinceEpoch()/1000);
+	msg["id"] = id;
+	packetStatus.insert(id,msg);
+	statusMutex.unlock();
 }
 
